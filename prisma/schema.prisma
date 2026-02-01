@@ -1,0 +1,181 @@
+// Prisma schema (v1 scaffold) for Dutrel
+// NOTE: This is a planning scaffold aligned to Phase 1/2 locks.
+// It intentionally does not include payment partner tables yet.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum HouseholdRole {
+  MEMBER
+  PAYER
+  SECONDARY_PAYER
+}
+
+enum BucketType {
+  GROUP
+  INDIVIDUAL
+}
+
+enum BucketVariability {
+  FIXED
+  VARIABLE
+}
+
+enum BucketCadence {
+  MONTHLY
+  QUARTERLY
+  OTHER
+}
+
+enum ObligationStatus {
+  OPEN
+  CLOSED
+  DISPUTED
+  REVERSED
+}
+
+enum ReceiptStatus {
+  MEMBER_SUBMITTED
+  PENDING_PAYER_REVIEW
+  VERIFIED
+  DISPUTED
+  AUTO_CLOSED_TIMEOUT
+  ESCALATED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships  HouseholdMember[]
+  receipts     Receipt[] @relation("ReceiptUploader")
+}
+
+model Household {
+  id           String   @id @default(cuid())
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  members      HouseholdMember[]
+  buckets      Bucket[]
+}
+
+model HouseholdMember {
+  id             String        @id @default(cuid())
+  householdId    String
+  userId         String
+  role           HouseholdRole @default(MEMBER)
+  successionRank Int           @default(0)
+  status         String        @default("ACTIVE") // scaffold for removal flow
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  household      Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, userId])
+  @@index([householdId])
+  @@index([userId])
+}
+
+model Bucket {
+  id                    String           @id @default(cuid())
+  householdId            String
+  type                  BucketType
+  name                  String
+  cadence               BucketCadence    @default(MONTHLY)
+  variability           BucketVariability @default(VARIABLE)
+
+  // For INDIVIDUAL buckets only (implicit coordinator authority)
+  ownerUserId           String?
+
+  // Autopay
+  autopayEnabledAt      DateTime?
+
+  // Notification controls
+  notificationPauseUntil DateTime?
+
+  // Buffer target (recommended)
+  bufferTargetCents     Int              @default(0)
+
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  household             Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  obligations           Obligation[]
+  members               BucketMember[]
+
+  @@index([householdId])
+  @@index([ownerUserId])
+}
+
+model BucketMember {
+  id            String   @id @default(cuid())
+  bucketId      String
+  householdMemberId String
+  createdAt     DateTime @default(now())
+
+  bucket        Bucket   @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  householdMember HouseholdMember @relation(fields: [householdMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([bucketId, householdMemberId])
+  @@index([bucketId])
+}
+
+model Obligation {
+  id              String          @id @default(cuid())
+  bucketId         String
+  status          ObligationStatus @default(OPEN)
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  dueDate         DateTime?
+  amountCents     Int             @default(0)
+
+  // state transitions
+  closedAt        DateTime?
+  closedByUserId  String?
+  reopenedAt      DateTime?
+  reopenedByUserId String?
+  reopenReason    String?
+
+  // recovery mode marker
+  isRecoveryMode  Boolean         @default(false)
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  bucket          Bucket          @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  receipts        Receipt[]
+
+  @@index([bucketId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model Receipt {
+  id             String       @id @default(cuid())
+  obligationId   String
+  status         ReceiptStatus @default(PENDING_PAYER_REVIEW)
+  uploadedByUserId String
+  reviewedByUserId String?
+  reviewedAt     DateTime?
+  disputeReason  String?
+  fileUrl        String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  obligation     Obligation   @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+  uploadedBy     User         @relation("ReceiptUploader", fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([obligationId])
+  @@index([status])
+}

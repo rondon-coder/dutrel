@@ -1,0 +1,20 @@
+// src/lib/constants.ts
+
+/**
+ * Constants for Dutrel
+ */
+
+export const RECEIPT_ESCALATION_HOURS = {
+  REMINDER: 24,
+  WARNING: 48,
+  AUTO_CLOSE: 72,
+} as const;
+
+export const ERROR_CODES = {
+  UNAUTHORIZED: 'UNAUTHORIZED',
+  FORBIDDEN: 'FORBIDDEN',
+  NOT_FOUND: 'NOT_FOUND',
+  BAD_REQUEST: 'BAD_REQUEST',
+  VALIDATION_ERROR: 'VALIDATION_ERROR',
+  INTERNAL_ERROR: 'INTERNAL_ERROR',
+} as const;

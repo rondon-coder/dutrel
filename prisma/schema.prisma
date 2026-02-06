@@ -224,3 +224,24 @@ model Receipt {
   @@index([obligationId])
   @@index([status])
 }
+
+/**
+ * =========================
+ * AUDIT LOG
+ * =========================
+ */
+
+model ActionLog {
+  id           String   @id @default(cuid())
+  householdId  String
+  actorUserId  String
+  action       String
+  entityType   String
+  entityId     String
+  metadataJson String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  @@index([householdId])
+  @@index([actorUserId])
+  @@index([createdAt])
+}

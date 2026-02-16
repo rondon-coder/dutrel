@@ -3,8 +3,25 @@ import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/auth';
 import { canVerifyReceipt, canViewObligation } from '@/lib/permissions';
 import { ERROR_CODES } from '@/lib/constants';
+import type { Prisma, ReceiptStatus } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
+
+type PatchBody = {
+  action?: unknown;
+  reason?: unknown;
+};
+
+function asString(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined;
+}
+
+function asTrimmedString(v: unknown): string | undefined {
+  const s = asString(v);
+  if (!s) return undefined;
+  const t = s.trim();
+  return t.length ? t : undefined;
+}
 
 /**
  * GET /api/receipts/[receiptId] - Get receipt details
@@ -80,9 +97,19 @@ export async function PATCH(
   try {
     const { receiptId } = await params;
     const { userId } = await requireAuth();
-    const body = await req.json();
 
-    if (!body.action || !['VERIFY', 'DISPUTE'].includes(body.action)) {
+    const bodyRaw: unknown = await req.json();
+    if (typeof bodyRaw !== 'object' || bodyRaw === null) {
+      return NextResponse.json(
+        { ok: false, error: ERROR_CODES.BAD_REQUEST, message: 'Invalid JSON body' },
+        { status: 400 }
+      );
+    }
+
+    const body = bodyRaw as PatchBody;
+
+    const action = asString(body.action);
+    if (action !== 'VERIFY' && action !== 'DISPUTE') {
       return NextResponse.json(
         { ok: false, error: ERROR_CODES.VALIDATION_ERROR, message: 'action must be VERIFY or DISPUTE' },
         { status: 400 }
@@ -114,15 +141,18 @@ export async function PATCH(
       );
     }
 
-    const isVerify = body.action === 'VERIFY';
-    const updateData: any = {
-      status: isVerify ? 'VERIFIED' : 'DISPUTED',
+    const isVerify = action === 'VERIFY';
+    const nextStatus: ReceiptStatus = isVerify ? 'VERIFIED' : 'DISPUTED';
+
+    const updateData: Prisma.ReceiptUpdateInput = {
+      status: nextStatus,
       reviewedByUserId: userId,
       reviewedAt: new Date(),
     };
 
-    if (!isVerify && body.reason) {
-      updateData.disputeReason = body.reason;
+    const reason = asTrimmedString(body.reason);
+    if (!isVerify && reason) {
+      updateData.disputeReason = reason;
     }
 
     const updated = await prisma.receipt.update({
@@ -144,7 +174,7 @@ export async function PATCH(
         action: isVerify ? 'RECEIPT_VERIFY' : 'RECEIPT_DISPUTE',
         entityType: 'RECEIPT',
         entityId: receiptId,
-        metadataJson: JSON.stringify({ reason: body.reason }),
+        metadataJson: JSON.stringify({ reason: reason ?? null }),
       },
     });
 

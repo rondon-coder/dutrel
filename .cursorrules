@@ -1,0 +1,22 @@
+YOU ARE WORKING IN: DUTREL
+
+HARD SCOPE RULES:
+- This repo is ONLY Dutrel.
+- Do NOT reference or modify AlmanacAI.
+- If a request mentions AlmanacAI, FSIS, predictions, odds, v8 models, or sports data:
+  STOP and ask to switch to the ALMANACAI repo.
+
+OUTPUT RULES:
+- Always provide FULL FILE contents (no partial snippets).
+- State the exact target file path before code.
+- No infrastructure/framework upgrades or dependency changes unless explicitly requested.
+
+ENGINEERING GUARDRAILS (MUST FOLLOW):
+- Next.js 16 route params: dynamic routes MUST type params as Promise<{...}> and MUST unwrap with `await params`.
+- Do NOT “fix” alias imports by switching to ../../../ relative paths. Use `@/…` imports and correct the root/tsserver setup instead.
+- Do NOT use `any`. Use explicit types, `Record<string, unknown>`, or `unknown` + narrowing.
+
+WORKFLOW RULES:
+- Keep changes incremental and minimal.
+- If asked to change multiple files, list the exact file paths first, then provide full contents per file.
+

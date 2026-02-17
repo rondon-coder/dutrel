@@ -1,6 +1,4 @@
-// Prisma schema (Phase 1–2 LOCKED scaffold) for Dutrel
-// VALID for Prisma v6.x (classic datasource url env("DATABASE_URL"))
-// NOTE: No payment partner tables yet by design.
+// Prisma schema (Dutrel - Autopay + Credit + Fintech Foundation)
 
 generator client {
   provider = "prisma-client-js"
@@ -10,12 +8,6 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
-/**
- * =========================
- * ENUMS
- * =========================
- */
 
 enum HouseholdRole {
   MEMBER
@@ -55,11 +47,130 @@ enum ReceiptStatus {
   ESCALATED
 }
 
+enum ObligationCategory {
+  RENT
+  UTILITY
+  OTHER
+}
+
 /**
- * =========================
- * CORE MODELS
- * =========================
+ * Fintech partner abstraction (foundation only)
+ * - UNIT / DWOLLA can be added later
+ * - Keep generic so we can swap providers
  */
+enum PaymentPartner {
+  NONE
+  UNIT
+  DWOLLA
+  STRIPE_TREASURY
+  OTHER
+}
+
+/**
+ * Where this bucket expects funds to live.
+ * INTERNAL = user manually funds / uses their own bank + autopay
+ * VIRTUAL_ACCOUNT = provider-issued account/routing dedicated to this bucket
+ */
+enum FundingMode {
+  INTERNAL
+  VIRTUAL_ACCOUNT
+}
+
+/**
+ * Lifecycle for a provider-issued virtual account.
+ */
+enum VirtualAccountStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+/**
+ * Tokenized/linked external funding source (foundation only)
+ * This is NOT a “card”. It can represent ACH funding tokens later.
+ */
+enum FundingSourceStatus {
+  PENDING
+  VERIFIED
+  DISABLED
+}
+
+/**
+ * Identity verification state (credit reporting prerequisite).
+ */
+enum IdentityStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum VerificationMethod {
+  MANUAL
+  SELFIE_ID
+  KBA
+  OTHER
+}
+
+/**
+ * Bucket-level credit reporting lifecycle.
+ * - ENFORCEMENT (Model 2): INDIVIDUAL only + autopay enabled + identity verified
+ */
+enum CreditReportingStatus {
+  DISABLED
+  ELIGIBLE
+  ACTIVE
+  PAUSED
+}
+
+/**
+ * Per-obligation reporting progression.
+ * We report positive-only events (on-time closures).
+ */
+enum ReportingState {
+  NOT_ELIGIBLE
+  ELIGIBLE
+  QUEUED
+  REPORTED
+  SKIPPED
+  ERROR
+}
+
+/**
+ * Credit reporting provider abstraction.
+ * (No external calls in Model 2 — just scaffolding.)
+ */
+enum CreditReportProvider {
+  NONE
+  EXPERIAN
+  EQUIFAX
+  TRANSUNION
+  PLAID_CRA
+  OTHER
+}
+
+enum CreditReportBatchStatus {
+  DRAFT
+  READY
+  SUBMITTED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum CreditReportItemStatus {
+  QUEUED
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  FAILED
+  SKIPPED
+}
+
+enum PaymentEventType {
+  ON_TIME_PAYMENT
+}
 
 model User {
   id        String   @id @default(cuid())
@@ -67,8 +178,61 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // AUTOPAY SETTINGS (internal-only today)
+  autopayEnabled          Boolean   @default(false)
+  autopayExternalNickname String? // e.g. "Chase Savings"
+  autopayLastConfirmedAt  DateTime?
+
+  // CREDIT REPORTING OPT-IN (individual only)
+  creditReportingEnabled Boolean   @default(false)
+  creditReportingSince   DateTime?
+
   memberships HouseholdMember[]
   receipts    Receipt[]         @relation("ReceiptUploader")
+
+  // Credit foundations
+  identity          UserIdentity?
+  creditReportItems CreditReportItem[]
+
+  // Fintech foundations
+  fundingSources FundingSource[]
+
+  @@index([autopayEnabled])
+  @@index([creditReportingEnabled])
+}
+
+model UserIdentity {
+  id     String              @id @default(cuid())
+  userId String              @unique
+  status IdentityStatus      @default(UNVERIFIED)
+  method VerificationMethod?
+
+  // Minimum viable fields for credit reporting (expand later)
+  legalFullName String?
+  dob           DateTime?
+  phoneE164     String?
+  ssnLast4      String?
+
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  postalCode   String?
+  country      String? @default("US")
+
+  verifiedAt     DateTime?
+  rejectedAt     DateTime?
+  rejectedReason String?
+
+  metadataJson String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([verifiedAt])
 }
 
 model Household {
@@ -81,37 +245,26 @@ model Household {
   buckets Bucket[]
 }
 
-/**
- * =========================
- * HOUSEHOLD MEMBERSHIP
- * =========================
- */
-
 model HouseholdMember {
   id             String        @id @default(cuid())
   householdId    String
   userId         String
   role           HouseholdRole @default(MEMBER)
   successionRank Int           @default(0)
-  status         String        @default("ACTIVE") // scaffold for removal flow
+  status         String        @default("ACTIVE")
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  bucketMemberships BucketMember[]
+  // ✅ back relation required for BucketMember.householdMember
+  bucketMembers BucketMember[]
 
   @@unique([householdId, userId])
   @@index([householdId])
   @@index([userId])
 }
-
-/**
- * =========================
- * BUCKETS
- * =========================
- */
 
 model Bucket {
   id          String            @id @default(cuid())
@@ -121,17 +274,29 @@ model Bucket {
   cadence     BucketCadence     @default(MONTHLY)
   variability BucketVariability @default(VARIABLE)
 
-  // For INDIVIDUAL buckets only (implicit coordinator authority)
   ownerUserId String?
 
-  // Autopay
-  autopayEnabledAt DateTime?
-
-  // Notification controls
+  autopayEnabledAt       DateTime?
   notificationPauseUntil DateTime?
+  bufferTargetCents      Int       @default(0)
 
-  // Buffer target (recommended)
-  bufferTargetCents Int @default(0)
+  /**
+   * FOUNDATION: Funding mode selector (default INTERNAL)
+   * If VIRTUAL_ACCOUNT, we attach VirtualAccount record(s).
+   */
+  fundingMode FundingMode @default(INTERNAL)
+
+  /**
+   * MODEL 2: Credit reporting scaffolding
+   * - Only INDIVIDUAL buckets may activate.
+   * - Positive-only reporting (on-time obligation closures).
+   */
+  creditReportingEnabled     Boolean               @default(false)
+  creditReportingStatus      CreditReportingStatus @default(DISABLED)
+  creditReportingProvider    CreditReportProvider  @default(NONE)
+  creditReportingActivatedAt DateTime?
+  creditReportingPausedAt    DateTime?
+  creditReportingReason      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -140,15 +305,18 @@ model Bucket {
   obligations Obligation[]
   members     BucketMember[]
 
+  // Fintech foundations
+  virtualAccounts VirtualAccount[]
+
+  // Credit foundations
+  creditBatches CreditReportBatch[]
+
   @@index([householdId])
   @@index([ownerUserId])
+  @@index([fundingMode])
+  @@index([creditReportingEnabled])
+  @@index([creditReportingStatus])
 }
-
-/**
- * =========================
- * BUCKET MEMBERSHIP
- * =========================
- */
 
 model BucketMember {
   id                String   @id @default(cuid())
@@ -164,47 +332,49 @@ model BucketMember {
   @@index([householdMemberId])
 }
 
-/**
- * =========================
- * OBLIGATIONS
- * =========================
- */
-
 model Obligation {
-  id          String           @id @default(cuid())
-  bucketId    String
-  status      ObligationStatus @default(OPEN)
+  id       String             @id @default(cuid())
+  bucketId String
+  status   ObligationStatus   @default(OPEN)
+  category ObligationCategory @default(OTHER)
+
   periodStart DateTime?
   periodEnd   DateTime?
   dueDate     DateTime?
-  amountCents Int              @default(0)
+  amountCents Int       @default(0)
 
-  // state transitions
   closedAt         DateTime?
   closedByUserId   String?
   reopenedAt       DateTime?
   reopenedByUserId String?
   reopenReason     String?
 
-  // recovery mode marker
   isRecoveryMode Boolean @default(false)
+
+  /**
+   * MODEL 2: Credit reporting per-obligation state
+   * - We only report positive events (on-time closure).
+   */
+  reportingState       ReportingState @default(NOT_ELIGIBLE)
+  reportingEligibleAt  DateTime?
+  reportingQueuedAt    DateTime?
+  reportedAt           DateTime?
+  reportingError       String?
+  reportingProviderRef String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  bucket   Bucket    @relation(fields: [bucketId], references: [id], onDelete: Cascade)
-  receipts Receipt[]
+  bucket            Bucket             @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  receipts          Receipt[]
+  creditReportItems CreditReportItem[]
 
   @@index([bucketId])
   @@index([status])
   @@index([dueDate])
+  @@index([category])
+  @@index([reportingState])
 }
-
-/**
- * =========================
- * RECEIPTS
- * =========================
- */
 
 model Receipt {
   id               String        @id @default(cuid())
@@ -226,10 +396,135 @@ model Receipt {
 }
 
 /**
- * =========================
- * AUDIT LOG
- * =========================
+ * MODEL 2: Reporting batches (audit trail / future provider submission units)
+ * - No external provider calls yet.
  */
+model CreditReportBatch {
+  id          String @id @default(cuid())
+  bucketId    String
+  householdId String
+
+  provider CreditReportProvider    @default(NONE)
+  status   CreditReportBatchStatus @default(DRAFT)
+
+  periodStart DateTime?
+  periodEnd   DateTime?
+
+  createdByUserId String?
+  submittedAt     DateTime?
+  completedAt     DateTime?
+
+  providerBatchId String?
+  metadataJson    String? @db.Text
+  errorMessage    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bucket Bucket @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+
+  items CreditReportItem[]
+
+  @@index([bucketId])
+  @@index([householdId])
+  @@index([status])
+  @@index([provider])
+}
+
+model CreditReportItem {
+  id           String @id @default(cuid())
+  batchId      String
+  obligationId String
+  userId       String
+
+  status    CreditReportItemStatus @default(QUEUED)
+  eventType PaymentEventType       @default(ON_TIME_PAYMENT)
+
+  amountCents Int       @default(0)
+  dueDate     DateTime?
+  paidAt      DateTime?
+
+  providerItemId       String?
+  providerResponseJson String? @db.Text
+  errorMessage         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  batch      CreditReportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  obligation Obligation        @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, obligationId])
+  @@index([batchId])
+  @@index([obligationId])
+  @@index([userId])
+  @@index([status])
+}
+
+/**
+ * FOUNDATION: Tokenized external funding source (future ACH debit)
+ * - do NOT store raw account/routing
+ * - providerToken/providerRefId is what Unit/Dwolla would give us
+ */
+model FundingSource {
+  id     String @id @default(cuid())
+  userId String
+
+  partner PaymentPartner      @default(NONE)
+  status  FundingSourceStatus @default(PENDING)
+
+  label       String? // "My Rent Account"
+  bankName    String?
+  last4       String? // masked display only
+  accountType String? // "checking" | "savings" (display)
+
+  providerToken String? // token/handle from partner (NOT a secret key)
+  providerRefId String? // partner object id
+  metadataJson  String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([partner, providerRefId])
+  @@index([userId])
+  @@index([partner])
+  @@index([status])
+}
+
+/**
+ * FOUNDATION: Provider-issued virtual account (routing/account) dedicated to a Bucket
+ * - do NOT store full account/routing unless it’s encrypted by your stack
+ * - best practice: store masked only + provider ref, and fetch full details from provider when needed
+ */
+model VirtualAccount {
+  id       String @id @default(cuid())
+  bucketId String
+
+  partner PaymentPartner       @default(NONE)
+  status  VirtualAccountStatus @default(PENDING)
+
+  nickname     String? // "Electric VA"
+  bankName     String?
+  routingLast4 String? // masked display only
+  accountLast4 String? // masked display only
+
+  providerAccountId  String? // provider object id (Unit accountId, Dwolla funding source id, etc.)
+  providerCustomerId String? // optional mapping
+  metadataJson       String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bucket Bucket @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+
+  @@unique([partner, providerAccountId])
+  @@index([bucketId])
+  @@index([partner])
+  @@index([status])
+}
 
 model ActionLog {
   id           String   @id @default(cuid())

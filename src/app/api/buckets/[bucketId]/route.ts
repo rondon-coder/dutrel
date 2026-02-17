@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/auth';
 import { requireBucketAccess, canManageBucket } from '@/lib/permissions';
 import { ERROR_CODES } from '@/lib/constants';
+import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,7 +68,8 @@ export async function PATCH(
   try {
     const { bucketId } = await params;
     const { userId } = await requireAuth();
-    const body = await req.json();
+
+    const body: unknown = await req.json();
 
     if (!(await canManageBucket(userId, bucketId))) {
       return NextResponse.json(
@@ -76,10 +78,26 @@ export async function PATCH(
       );
     }
 
-    const updateData: any = {};
-    if (body.name) updateData.name = body.name;
-    if (body.autopayEnabledAt !== undefined) {
-      updateData.autopayEnabledAt = body.autopayEnabledAt ? new Date(body.autopayEnabledAt) : null;
+    const updateData: Prisma.BucketUpdateInput = {};
+
+    if (typeof body === 'object' && body !== null) {
+      const b = body as Record<string, unknown>;
+
+      if (typeof b.name === 'string' && b.name.trim().length > 0) {
+        updateData.name = b.name.trim();
+      }
+
+      if (b.autopayEnabledAt !== undefined) {
+        // allow null / empty to unset; otherwise parse as Date
+        if (b.autopayEnabledAt === null || b.autopayEnabledAt === '') {
+          updateData.autopayEnabledAt = null;
+        } else if (typeof b.autopayEnabledAt === 'string' || typeof b.autopayEnabledAt === 'number') {
+          const d = new Date(b.autopayEnabledAt);
+          if (!Number.isNaN(d.getTime())) {
+            updateData.autopayEnabledAt = d;
+          }
+        }
+      }
     }
 
     const bucket = await prisma.bucket.update({

@@ -1,4 +1,4 @@
-// Prisma schema (Dutrel - Autopay + Credit + Fintech Foundation)
+// Prisma schema (Dutrel - Autopay + Credit + Fintech Foundation + Bill Account Monitoring)
 
 generator client {
   provider = "prisma-client-js"
@@ -13,6 +13,18 @@ enum HouseholdRole {
   MEMBER
   PAYER
   SECONDARY_PAYER
+}
+
+enum MemberStatus {
+  ACTIVE
+  INVITED
+  LEFT
+  REMOVED
+}
+
+enum HouseholdKind {
+  ROOMMATES
+  PROPERTY
 }
 
 enum BucketType {
@@ -54,31 +66,24 @@ enum ObligationCategory {
 }
 
 /**
- * Fintech partner abstraction (foundation only)
- * - UNIT / DWOLLA can be added later
- * - Keep generic so we can swap providers
+ * Fintech partner abstraction
+ * PLAID = read-only monitoring
+ * UNIT/DWOLLA/STRIPE_TREASURY = future custody partners
  */
 enum PaymentPartner {
   NONE
+  PLAID
   UNIT
   DWOLLA
   STRIPE_TREASURY
   OTHER
 }
 
-/**
- * Where this bucket expects funds to live.
- * INTERNAL = user manually funds / uses their own bank + autopay
- * VIRTUAL_ACCOUNT = provider-issued account/routing dedicated to this bucket
- */
 enum FundingMode {
   INTERNAL
   VIRTUAL_ACCOUNT
 }
 
-/**
- * Lifecycle for a provider-issued virtual account.
- */
 enum VirtualAccountStatus {
   PENDING
   ACTIVE
@@ -86,90 +91,31 @@ enum VirtualAccountStatus {
   CLOSED
 }
 
-/**
- * Tokenized/linked external funding source (foundation only)
- * This is NOT a “card”. It can represent ACH funding tokens later.
- */
 enum FundingSourceStatus {
   PENDING
   VERIFIED
   DISABLED
 }
 
-/**
- * Identity verification state (credit reporting prerequisite).
- */
-enum IdentityStatus {
-  UNVERIFIED
-  PENDING
-  VERIFIED
-  REJECTED
-}
-
-enum VerificationMethod {
-  MANUAL
-  SELFIE_ID
-  KBA
-  OTHER
-}
-
-/**
- * Bucket-level credit reporting lifecycle.
- * - ENFORCEMENT (Model 2): INDIVIDUAL only + autopay enabled + identity verified
- */
-enum CreditReportingStatus {
-  DISABLED
-  ELIGIBLE
+enum BankConnectionStatus {
   ACTIVE
-  PAUSED
-}
-
-/**
- * Per-obligation reporting progression.
- * We report positive-only events (on-time closures).
- */
-enum ReportingState {
-  NOT_ELIGIBLE
-  ELIGIBLE
-  QUEUED
-  REPORTED
-  SKIPPED
+  DISCONNECTED
   ERROR
 }
 
-/**
- * Credit reporting provider abstraction.
- * (No external calls in Model 2 — just scaffolding.)
- */
-enum CreditReportProvider {
-  NONE
-  EXPERIAN
-  EQUIFAX
-  TRANSUNION
-  PLAID_CRA
+enum AttachmentKind {
+  FILE
+  LINK
+  NOTE
+}
+
+enum AttachmentType {
+  LEASE
+  HOA
+  VENDOR
+  INVOICE
+  RECEIPT
   OTHER
-}
-
-enum CreditReportBatchStatus {
-  DRAFT
-  READY
-  SUBMITTED
-  COMPLETED
-  FAILED
-  CANCELLED
-}
-
-enum CreditReportItemStatus {
-  QUEUED
-  SUBMITTED
-  ACCEPTED
-  REJECTED
-  FAILED
-  SKIPPED
-}
-
-enum PaymentEventType {
-  ON_TIME_PAYMENT
 }
 
 model User {
@@ -178,68 +124,29 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // AUTOPAY SETTINGS (internal-only today)
   autopayEnabled          Boolean   @default(false)
-  autopayExternalNickname String? // e.g. "Chase Savings"
+  autopayExternalNickname String?
   autopayLastConfirmedAt  DateTime?
 
-  // CREDIT REPORTING OPT-IN (individual only)
   creditReportingEnabled Boolean   @default(false)
   creditReportingSince   DateTime?
 
-  memberships HouseholdMember[]
-  receipts    Receipt[]         @relation("ReceiptUploader")
-
-  // Credit foundations
-  identity          UserIdentity?
-  creditReportItems CreditReportItem[]
-
-  // Fintech foundations
-  fundingSources FundingSource[]
+  memberships       HouseholdMember[]
+  receipts          Receipt[]         @relation("ReceiptUploader")
+  fundingSources    FundingSource[]
+  bankConnections   BankConnection[]
+  bucketAttachments BucketAttachment[] @relation("BucketAttachmentCreator")
 
   @@index([autopayEnabled])
   @@index([creditReportingEnabled])
 }
 
-model UserIdentity {
-  id     String              @id @default(cuid())
-  userId String              @unique
-  status IdentityStatus      @default(UNVERIFIED)
-  method VerificationMethod?
-
-  // Minimum viable fields for credit reporting (expand later)
-  legalFullName String?
-  dob           DateTime?
-  phoneE164     String?
-  ssnLast4      String?
-
-  addressLine1 String?
-  addressLine2 String?
-  city         String?
-  state        String?
-  postalCode   String?
-  country      String? @default("US")
-
-  verifiedAt     DateTime?
-  rejectedAt     DateTime?
-  rejectedReason String?
-
-  metadataJson String? @db.Text
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([status])
-  @@index([verifiedAt])
-}
-
 model Household {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  kind      HouseholdKind @default(ROOMMATES)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
   members HouseholdMember[]
   buckets Bucket[]
@@ -251,19 +158,21 @@ model HouseholdMember {
   userId         String
   role           HouseholdRole @default(MEMBER)
   successionRank Int           @default(0)
-  status         String        @default("ACTIVE")
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
 
-  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // kept as String to avoid unsafe enum migration
+  status String @default("ACTIVE")
 
-  // ✅ back relation required for BucketMember.householdMember
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  household     Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   bucketMembers BucketMember[]
 
   @@unique([householdId, userId])
   @@index([householdId])
   @@index([userId])
+  @@index([status])
 }
 
 model Bucket {
@@ -280,20 +189,11 @@ model Bucket {
   notificationPauseUntil DateTime?
   bufferTargetCents      Int       @default(0)
 
-  /**
-   * FOUNDATION: Funding mode selector (default INTERNAL)
-   * If VIRTUAL_ACCOUNT, we attach VirtualAccount record(s).
-   */
   fundingMode FundingMode @default(INTERNAL)
 
-  /**
-   * MODEL 2: Credit reporting scaffolding
-   * - Only INDIVIDUAL buckets may activate.
-   * - Positive-only reporting (on-time obligation closures).
-   */
-  creditReportingEnabled     Boolean               @default(false)
-  creditReportingStatus      CreditReportingStatus @default(DISABLED)
-  creditReportingProvider    CreditReportProvider  @default(NONE)
+  creditReportingEnabled     Boolean  @default(false)
+  creditReportingStatus      String   @default("INACTIVE")
+  creditReportingProvider    String   @default("NONE")
   creditReportingActivatedAt DateTime?
   creditReportingPausedAt    DateTime?
   creditReportingReason      String?
@@ -301,21 +201,16 @@ model Bucket {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  household   Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  obligations Obligation[]
-  members     BucketMember[]
-
-  // Fintech foundations
+  household       Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  obligations     Obligation[]
+  members         BucketMember[]
   virtualAccounts VirtualAccount[]
-
-  // Credit foundations
-  creditBatches CreditReportBatch[]
+  attachments     BucketAttachment[]
 
   @@index([householdId])
   @@index([ownerUserId])
   @@index([fundingMode])
   @@index([creditReportingEnabled])
-  @@index([creditReportingStatus])
 }
 
 model BucketMember {
@@ -351,29 +246,18 @@ model Obligation {
 
   isRecoveryMode Boolean @default(false)
 
-  /**
-   * MODEL 2: Credit reporting per-obligation state
-   * - We only report positive events (on-time closure).
-   */
-  reportingState       ReportingState @default(NOT_ELIGIBLE)
-  reportingEligibleAt  DateTime?
-  reportingQueuedAt    DateTime?
-  reportedAt           DateTime?
-  reportingError       String?
-  reportingProviderRef String?
-
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  bucket            Bucket             @relation(fields: [bucketId], references: [id], onDelete: Cascade)
-  receipts          Receipt[]
-  creditReportItems CreditReportItem[]
+  bucket         Bucket         @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  receipts       Receipt[]
+  paymentMatches PaymentMatch[]
 
   @@index([bucketId])
   @@index([status])
   @@index([dueDate])
   @@index([category])
-  @@index([reportingState])
+  @@index([closedByUserId])
 }
 
 model Receipt {
@@ -393,80 +277,133 @@ model Receipt {
 
   @@index([obligationId])
   @@index([status])
+  @@index([uploadedByUserId])
+  @@index([reviewedByUserId])
 }
 
-/**
- * MODEL 2: Reporting batches (audit trail / future provider submission units)
- * - No external provider calls yet.
- */
-model CreditReportBatch {
-  id          String @id @default(cuid())
-  bucketId    String
-  householdId String
+model BucketAttachment {
+  id              String @id @default(cuid())
+  bucketId        String
+  createdByUserId String
 
-  provider CreditReportProvider    @default(NONE)
-  status   CreditReportBatchStatus @default(DRAFT)
+  kind AttachmentKind
+  type AttachmentType @default(OTHER)
 
-  periodStart DateTime?
-  periodEnd   DateTime?
+  title             String
+  pinnedToHousehold Boolean @default(false)
 
-  createdByUserId String?
-  submittedAt     DateTime?
-  completedAt     DateTime?
+  fileUrl   String?
+  mimeType  String?
+  sizeBytes Int?
 
-  providerBatchId String?
-  metadataJson    String? @db.Text
-  errorMessage    String?
+  url      String?
+  noteText String? @db.Text
+  metadataJson String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  bucket Bucket @relation(fields: [bucketId], references: [id], onDelete: Cascade)
-
-  items CreditReportItem[]
+  bucket    Bucket @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  createdBy User   @relation("BucketAttachmentCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
 
   @@index([bucketId])
-  @@index([householdId])
-  @@index([status])
-  @@index([provider])
+  @@index([pinnedToHousehold])
+  @@index([createdAt])
+  @@index([createdByUserId])
 }
 
-model CreditReportItem {
-  id           String @id @default(cuid())
-  batchId      String
-  obligationId String
-  userId       String
+model BankConnection {
+  id     String @id @default(cuid())
+  userId String
 
-  status    CreditReportItemStatus @default(QUEUED)
-  eventType PaymentEventType       @default(ON_TIME_PAYMENT)
+  partner PaymentPartner       @default(PLAID)
+  status  BankConnectionStatus @default(ACTIVE)
 
-  amountCents Int       @default(0)
-  dueDate     DateTime?
-  paidAt      DateTime?
+  plaidItemId     String? @unique
+  accessTokenEnc  String? @db.Text
+  institutionName String?
+  institutionId   String?
 
-  providerItemId       String?
-  providerResponseJson String? @db.Text
-  errorMessage         String?
+  label     String?
+  isDefault Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  batch      CreditReportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  obligation Obligation        @relation(fields: [obligationId], references: [id], onDelete: Cascade)
-  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts BankAccount[]
 
-  @@unique([batchId, obligationId])
-  @@index([batchId])
-  @@index([obligationId])
   @@index([userId])
   @@index([status])
+  @@index([partner])
 }
 
-/**
- * FOUNDATION: Tokenized external funding source (future ACH debit)
- * - do NOT store raw account/routing
- * - providerToken/providerRefId is what Unit/Dwolla would give us
- */
+model BankAccount {
+  id             String @id @default(cuid())
+  connectionId   String
+
+  plaidAccountId String? @unique
+  name           String?
+  officialName   String?
+  maskLast4      String?
+  type           String?
+  subtype        String?
+
+  isBillAccount Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  connection       BankConnection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  balanceSnapshots BalanceSnapshot[]
+  paymentMatches   PaymentMatch[]
+
+  @@index([connectionId])
+  @@index([isBillAccount])
+}
+
+model BalanceSnapshot {
+  id            String   @id @default(cuid())
+  bankAccountId String
+
+  availableCents Int?
+  currentCents   Int?
+  asOf           DateTime
+
+  createdAt DateTime @default(now())
+
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+
+  @@index([bankAccountId])
+  @@index([asOf])
+}
+
+model PaymentMatch {
+  id            String @id @default(cuid())
+  obligationId  String
+  bankAccountId String
+
+  partner      PaymentPartner @default(PLAID)
+  partnerTxnId String?        @unique
+
+  amountCents Int
+  postedAt    DateTime?
+  description String?
+
+  status       String  @default("MATCHED")
+  metadataJson String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  obligation  Obligation  @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+
+  @@index([obligationId])
+  @@index([bankAccountId])
+  @@index([partner])
+}
+
 model FundingSource {
   id     String @id @default(cuid())
   userId String
@@ -474,13 +411,13 @@ model FundingSource {
   partner PaymentPartner      @default(NONE)
   status  FundingSourceStatus @default(PENDING)
 
-  label       String? // "My Rent Account"
+  label       String?
   bankName    String?
-  last4       String? // masked display only
-  accountType String? // "checking" | "savings" (display)
+  last4       String?
+  accountType String?
 
-  providerToken String? // token/handle from partner (NOT a secret key)
-  providerRefId String? // partner object id
+  providerToken String?
+  providerRefId String?
   metadataJson  String? @db.Text
 
   createdAt DateTime @default(now())
@@ -494,11 +431,6 @@ model FundingSource {
   @@index([status])
 }
 
-/**
- * FOUNDATION: Provider-issued virtual account (routing/account) dedicated to a Bucket
- * - do NOT store full account/routing unless it’s encrypted by your stack
- * - best practice: store masked only + provider ref, and fetch full details from provider when needed
- */
 model VirtualAccount {
   id       String @id @default(cuid())
   bucketId String
@@ -506,13 +438,13 @@ model VirtualAccount {
   partner PaymentPartner       @default(NONE)
   status  VirtualAccountStatus @default(PENDING)
 
-  nickname     String? // "Electric VA"
+  nickname     String?
   bankName     String?
-  routingLast4 String? // masked display only
-  accountLast4 String? // masked display only
+  routingLast4 String?
+  accountLast4 String?
 
-  providerAccountId  String? // provider object id (Unit accountId, Dwolla funding source id, etc.)
-  providerCustomerId String? // optional mapping
+  providerAccountId  String?
+  providerCustomerId String?
   metadataJson       String? @db.Text
 
   createdAt DateTime @default(now())

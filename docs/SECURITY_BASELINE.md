@@ -1,22 +1,48 @@
-# Dutrel — Security Baseline (Phase 0/1)
+# Dutrel — Security Baseline (v2)
 
-This is a practical baseline aimed at shipping safely as a solo builder.
+------------------------------------------------------------
+DATA
+------------------------------------------------------------
 
-## Data
-- Encrypt in transit (TLS everywhere).
-- Store only necessary PII.
-- Receipts: store in blob storage; DB holds URL + metadata; support deletion/retention policy.
+- TLS everywhere
+- Minimal PII storage
+- Receipts stored in Blob; DB holds URL + metadata
+- User deletion supported
 
-## Auth
-- Strong password policy or magic link.
-- Rate limit login + sensitive actions.
-- Session strategy that supports web + mobile safely (short-lived access, refresh rotation).
+------------------------------------------------------------
+PLAID
+------------------------------------------------------------
 
-## Audit
-- Log all coordinator actions:
-  - role changes, reopen/dispute, autopay_enabled_at edits, obligation amount edits, pauses, external-paid marks
+- Read-only products only (Auth, Balance, Transactions)
+- No raw routing/account storage
+- Access tokens encrypted
+- Disconnect anytime
+- No spending analytics
 
-## Operational
-- Backups (Neon)
+------------------------------------------------------------
+AUTH
+------------------------------------------------------------
+
+- Strong password or magic link
+- Rate limiting
+- Short-lived access tokens
+- Refresh rotation
+
+------------------------------------------------------------
+AUDIT
+------------------------------------------------------------
+
+Log all coordinator actions:
+- Role changes
+- Reopen/dispute
+- Autopay edits
+- External-paid marks
+- Buffer overrides
+
+------------------------------------------------------------
+OPERATIONS
+------------------------------------------------------------
+
+- Neon backups
 - Error monitoring (Sentry optional)
-- Minimal admin tooling (read-only audit views)
+- Minimal read-only admin tools

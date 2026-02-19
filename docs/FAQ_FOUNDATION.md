@@ -1,48 +1,59 @@
-# Dutrel — FAQ Foundation (from pressure tests)
+# Dutrel — FAQ Foundation (v2)
 
-This is a future FAQ skeleton based on locked behavior. Copy is intentionally neutral.
+------------------------------------------------------------
+GENERAL
+------------------------------------------------------------
 
-## General
-### What does Dutrel do?
-Dutrel helps households and individuals coordinate recurring payments by showing funding gaps early, tracking obligations, and closing the loop with receipts or confirmations.
+What does Dutrel do?
+Dutrel helps households and individuals coordinate recurring payments
+by showing funding gaps early, tracking obligations, and closing the loop
+with receipts or confirmations.
 
-### Does Dutrel force anyone to pay?
-No. Dutrel does not force funding. It surfaces gaps early and provides clear resolution paths.
+Does Dutrel force anyone to pay?
+No. Dutrel does not force funding.
 
-## Utilities & External Accounts
-### Should everyone have access to the utility provider account?
-Yes—when possible. Households should ensure all members have access to the utility provider’s account for unforeseen issues (e.g., account holder leaves, autopay changes, provider account updates).
+Does Dutrel hold my money?
+No. Dutrel is non-custodial in Phase 1–3.
 
-### Why doesn’t Dutrel verify payments directly with the utility?
-Phase 1 does not connect to utility systems. Dutrel relies on receipts and confirmations to keep the household coordinated without scraping or impersonating utilities.
+------------------------------------------------------------
+BILL ACCOUNT
+------------------------------------------------------------
 
-## Autopay
-### When should we enable autopay?
-Enable autopay on the utility provider site. Record the autopay activation date in Dutrel.
+Should I connect my main checking?
+We recommend connecting a dedicated bill account (checking or savings)
+used only for recurring obligations.
 
-### What is the Warm-Up Period?
-The first 2 completed billing cycles after autopay is enabled. During Warm-Up, manual payment + receipt is required to avoid early setup delays or first-time autopay timing issues.
+What happens if I don’t connect Plaid?
+You can still manually track obligations and receipts.
+Plaid enables balance sufficiency alerts and payment detection.
 
-## Receipts
-### Can anyone upload a receipt?
-Yes. Any member may upload a receipt anytime. Member receipts require payer review to close an obligation.
+------------------------------------------------------------
+LANDLORD TIER
+------------------------------------------------------------
 
-### What if the payer ignores a receipt?
-Receipts escalate (24/48/72 hours) and may auto-close by timeout to prevent the system from stalling. Coordinators can reopen with a reason.
+Can landlords use Dutrel?
+Yes. A property can be created as a Household.
 
-### What if a receipt is nonsense?
-Payer/Secondary can dispute/reopen with a structured reason. The action is logged and visible to the household.
+Can landlords use it without tenants?
+Yes. Landlords may track recurring property bills even when vacant.
 
-## Failures, NSF, Reversals
-### What happens if a scheduled debit fails?
-Dutrel notifies the household and the impacted member. Manual funding or external payment can be used, with receipt submission to close the loop.
+Does Dutrel collect rent?
+No. Rent is paid externally.
 
-### What if the utility reverses a payment?
-Dutrel enters Recovery Mode for that bucket: it pauses automatic actions and requires manual resolution. Dutrel does not automatically retry because utilities typically do not retry multiple times.
+------------------------------------------------------------
+AUTOPAY
+------------------------------------------------------------
 
-## Roles
-### What is a Payer?
-The household coordinator for group buckets. The payer is not the only person who can pay a bill, but is responsible for verifying/closing loops and resolving disputes.
+When should we enable autopay?
+Enable on the provider site. Record the activation date in Dutrel.
 
-### What if the payer leaves unexpectedly?
-Secondary Payer is promoted automatically. Obligations remain intact. Households should ensure shared access to external provider accounts when possible.
+What is Warm-Up Period?
+First 2 billing cycles after autopay activation.
+
+------------------------------------------------------------
+FAILURES
+------------------------------------------------------------
+
+What if a payment fails?
+Dutrel enters Recovery Mode and requires manual resolution.
+No automatic retries.

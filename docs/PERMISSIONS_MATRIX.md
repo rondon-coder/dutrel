@@ -87,3 +87,28 @@ Notes:
 - No automatic retries (mirrors utilities)
 - Manual resolution required
 - Buffer use during reversals requires Coordinator approval
+
+Bucket Management Permissions
+
+Role                  Can Manage?
+-----------------------------------------
+PAYER                 YES (always)
+SECONDARY_PAYER       YES (always)
+Responsible Member    YES (only that bucket)
+INDIVIDUAL Owner      YES (only own bucket)
+Other Members         NO
+
+## Bucket Visibility + Responsibility (v2)
+
+### Visibility (who can SEE a bucket)
+- **PAYER / SECONDARY_PAYER:** can see **all buckets** in the household (even if not a bucket member).
+- **Non-payer members:** can only see buckets where they are an explicit **BucketMember**, plus **INDIVIDUAL** buckets they **own**.
+
+### Management (who can MODIFY a bucket)
+- **PAYER / SECONDARY_PAYER:** can manage all buckets (safety/credit continuity).
+- **INDIVIDUAL bucket owner:** can manage their own INDIVIDUAL bucket.
+- **Bucket Responsibility layer (optional):** any household member designated as responsible for a bucket can manage that bucket.
+
+Notes:
+- Responsibility is intended for cases like “Internet split between 2 roommates” inside a 4-person household.
+- Responsibility does **not** override payer authority (payer always retains manage access).

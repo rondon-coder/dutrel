@@ -251,3 +251,20 @@ LOCK RULE
 
 If a new feature cannot be described using the terminology above,
 it must not be implemented without updating this document first.
+------------------------------------------------------------
+RESPONSIBILITY
+------------------------------------------------------------
+
+Responsible Member
+HouseholdMember designated as legally or functionally responsible
+for a specific bucket’s obligation.
+
+- Can manage that bucket.
+- Used for credit reporting logic.
+- Does not override Payer authority.
+
+### Bucket Responsibility
+A bucket can optionally designate one or more **responsible household members**.
+- The first responsible member is **PRIMARY**; additional are **SECONDARY**.
+- Responsible members can manage the bucket (even if they are not the household payer).
+- PAYER / SECONDARY_PAYER always retain manage access across all buckets.

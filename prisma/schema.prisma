@@ -1,4 +1,4 @@
-// Prisma schema (Dutrel - Autopay + Credit + Fintech Foundation + Bill Account Monitoring + Object Storage)
+// Prisma schema (Dutrel - Autopay + Credit + Fintech Foundation + Bill Account Monitoring)
 
 generator client {
   provider = "prisma-client-js"
@@ -30,6 +30,11 @@ enum HouseholdKind {
 enum BucketType {
   GROUP
   INDIVIDUAL
+}
+
+enum BucketResponsibilityRole {
+  PRIMARY
+  SECONDARY
 }
 
 enum BucketVariability {
@@ -155,7 +160,7 @@ model User {
 
   // AUTOPAY SETTINGS (non-custodial; user enables autopay externally)
   autopayEnabled          Boolean   @default(false)
-  autopayExternalNickname String? // e.g. "Bills Checking"
+  autopayExternalNickname String?
   autopayLastConfirmedAt  DateTime?
 
   // CREDIT REPORTING OPT-IN (individual only)
@@ -202,6 +207,7 @@ model HouseholdMember {
   household     Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   bucketMembers BucketMember[]
+  responsibleFor BucketResponsibility[]
 
   @@unique([householdId, userId])
   @@index([householdId])
@@ -230,12 +236,12 @@ model Bucket {
   fundingMode FundingMode @default(INTERNAL)
 
   // CREDIT REPORTING (individual only)
-  creditReportingEnabled       Boolean   @default(false)
-  creditReportingStatus        String    @default("INACTIVE") // ACTIVE | PAUSED | INACTIVE
-  creditReportingProvider      String    @default("NONE")
-  creditReportingActivatedAt   DateTime?
-  creditReportingPausedAt      DateTime?
-  creditReportingReason        String?
+  creditReportingEnabled     Boolean  @default(false)
+  creditReportingStatus      String   @default("INACTIVE")
+  creditReportingProvider    String   @default("NONE")
+  creditReportingActivatedAt DateTime?
+  creditReportingPausedAt    DateTime?
+  creditReportingReason      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -243,6 +249,7 @@ model Bucket {
   household   Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
   obligations Obligation[]
   members     BucketMember[]
+  responsibleMembers BucketResponsibility[]
 
   // Fintech foundations (future partner phases)
   virtualAccounts VirtualAccount[]
@@ -268,6 +275,22 @@ model BucketMember {
   @@unique([bucketId, householdMemberId])
   @@index([bucketId])
   @@index([householdMemberId])
+}
+
+model BucketResponsibility {
+  id                String                   @id @default(cuid())
+  bucketId          String
+  householdMemberId String
+  role              BucketResponsibilityRole @default(PRIMARY)
+  createdAt         DateTime                 @default(now())
+
+  bucket          Bucket          @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  householdMember HouseholdMember @relation(fields: [householdMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([bucketId, householdMemberId])
+  @@index([bucketId])
+  @@index([householdMemberId])
+  @@index([role])
 }
 
 model Obligation {
@@ -326,11 +349,6 @@ model Receipt {
   @@index([reviewedByUserId])
 }
 
-/**
- * Unified bucket attachment system:
- * - FILE objects stored in object storage (R2/S3)
- * - API returns presigned URLs; frontend never stores provider URLs as source-of-truth
- */
 model BucketAttachment {
   id              String @id @default(cuid())
   bucketId        String
@@ -342,16 +360,16 @@ model BucketAttachment {
   title             String
   pinnedToHousehold Boolean @default(false)
 
-  // FILE (new durable references)
-  storageProvider  StorageProvider? // R2 | S3
-  objectKey        String?          // stable key (source-of-truth)
-  originalFilename String?
-  sha256           String?
+  // FILE (durable object storage)
+  storageProvider StorageProvider?
+  objectKey       String?
+  originalName    String?
+  mimeType        String?
+  sizeBytes       Int?
+  sha256Hex       String?
 
-  // FILE (legacy/back-compat — do not rely on this long-term)
-  fileUrl   String?
-  mimeType  String?
-  sizeBytes Int?
+  // (legacy / interim)
+  fileUrl String?
 
   // LINK
   url String?
@@ -383,7 +401,7 @@ model BankConnection {
 
   // Plaid identifiers (read-only)
   plaidItemId     String? @unique
-  accessTokenEnc  String? @db.Text // encrypted at rest; never plaintext
+  accessTokenEnc  String? @db.Text
   institutionName String?
   institutionId   String?
 
@@ -455,7 +473,7 @@ model PaymentMatch {
   postedAt    DateTime?
   description String?
 
-  status       String  @default("MATCHED") // MATCHED | CONFIRMED | REJECTED
+  status       String  @default("MATCHED")
   metadataJson String? @db.Text
 
   createdAt DateTime @default(now())
@@ -524,12 +542,13 @@ model VirtualAccount {
 }
 
 model ActionLog {
-  id           String   @id @default(cuid())
-  householdId  String
-  actorUserId  String
-  action       String
-  entityType   String
-  entityId     String
+  id          String   @id @default(cuid())
+  householdId String
+  actorUserId String
+  action      String
+  entityType  String
+  entityId    String
+
   metadataJson String?  @db.Text
   createdAt    DateTime @default(now())
 

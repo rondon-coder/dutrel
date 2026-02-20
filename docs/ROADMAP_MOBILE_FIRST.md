@@ -39,7 +39,13 @@ PHASE 1 — Core Coordination Engine
 - Audit logging
 
 NON-CUSTODIAL.
-
+------------------------------------------------------------
+Phase 2 – Responsibility Layer
+------------------------------------------------------------
+• Introduce bucket-level responsibility mapping
+• Enable selective splits (subset roommates)
+• Foundation for credit reporting linkage
+• Payer override retained
 ------------------------------------------------------------
 PHASE 2A — Bill Account Monitoring (Plaid Read-Only)
 ------------------------------------------------------------
@@ -92,3 +98,9 @@ PHASE 4 — Partner Integration Layer (Optional Future)
 - Reconciliation
 
 This phase changes custody model and requires compliance expansion.
+
+### Bucket Responsibility Layer (Scalable Ownership)
+Add optional bucket-level responsibility assignment so that:
+- Buckets can be split among a subset of roommates (e.g., Internet is split between 2 of 4).
+- The responsible person(s) can manage monitoring + attachments for that bucket.
+- Household payer still retains global manage access for safety/offboarding.

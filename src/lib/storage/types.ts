@@ -21,11 +21,18 @@ export interface StorageDriver {
    * Return a presigned URL for client upload (PUT) or download (GET).
    * Frontend should never persist these URLs; they expire.
    */
-  presign(key: string, op: SignedUrlOp, expiresInSeconds?: number, opts?: PutObjectInput): Promise<SignedUrlResult>;
+  presign(
+    key: string,
+    op: SignedUrlOp,
+    expiresInSeconds?: number,
+    opts?: PutObjectInput
+  ): Promise<SignedUrlResult>;
 
   /** Server-side delete (admin/cleanup/backfill) */
   deleteObject(key: string): Promise<void>;
 
   /** Exists + basic metadata (used for migration verification) */
-  headObject(key: string): Promise<{ exists: boolean; contentLength?: number; contentType?: string }>;
+  headObject(
+    key: string
+  ): Promise<{ exists: boolean; contentLength?: number; contentType?: string }>;
 }

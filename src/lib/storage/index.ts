@@ -1,3 +1,4 @@
+// src/lib/storage/index.ts
 import type { StorageDriver, StorageProvider } from './types';
 import { getDefaultStorageProvider } from './config';
 import { createR2Driver } from './r2';
@@ -6,6 +7,10 @@ import { createS3Driver } from './s3';
 let cachedR2: StorageDriver | null = null;
 let cachedS3: StorageDriver | null = null;
 
+/**
+ * Driver selector with in-process caching.
+ * - Default provider comes from env (STORAGE_PROVIDER_DEFAULT), falling back to R2.
+ */
 export function getStorageDriver(provider?: StorageProvider): StorageDriver {
   const p = provider || getDefaultStorageProvider();
 
@@ -17,6 +22,12 @@ export function getStorageDriver(provider?: StorageProvider): StorageDriver {
   if (!cachedR2) cachedR2 = createR2Driver();
   return cachedR2;
 }
+
+/**
+ * Convenience singleton: default provider driver.
+ * NOTE: Will read env vars on first access (via driver creation).
+ */
+export const storage: StorageDriver = getStorageDriver();
 
 /**
  * Single source-of-truth path generator

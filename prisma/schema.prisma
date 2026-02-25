@@ -1,4 +1,4 @@
-// Prisma schema (Dutrel - Autopay + Credit + Fintech Foundation + Bill Account Monitoring)
+// Prisma schema (Dutrel - Autopay + Credit + Fintech Foundation + Bill Account Monitoring + Bucket Responsibility + Phase 3 Allocation Engine)
 
 generator client {
   provider = "prisma-client-js"
@@ -30,11 +30,6 @@ enum HouseholdKind {
 enum BucketType {
   GROUP
   INDIVIDUAL
-}
-
-enum BucketResponsibilityRole {
-  PRIMARY
-  SECONDARY
 }
 
 enum BucketVariability {
@@ -152,6 +147,38 @@ enum StorageProvider {
   S3
 }
 
+/**
+ * Bucket responsibility layer:
+ * - PAYER can always manage (permissions)
+ * - Responsibility is about "who is responsible for this bucket"
+ * (account holder / credit impact / who should be contacted first)
+ */
+enum BucketResponsibilityRole {
+  PRIMARY
+  SECONDARY
+}
+
+/**
+ * Phase 3 allocation engine:
+ * - AllocationPlan defines how a bucket is split among members
+ * - Rooms + RoomAssignments provide bedroom/bath weighting inputs
+ */
+enum AllocationMethod {
+  EQUAL
+  ROOM_WEIGHTED
+  HYBRID
+}
+
+/**
+ * Room assignment role:
+ * - PRIMARY_BEDROOM is the main bedroom for that household member
+ * - EXTRA_ROOM covers office/storage/etc (optional future use)
+ */
+enum RoomAssignmentRole {
+  PRIMARY_BEDROOM
+  EXTRA_ROOM
+}
+
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
@@ -191,7 +218,10 @@ model Household {
   updatedAt DateTime      @updatedAt
 
   members HouseholdMember[]
-  buckets  Bucket[]
+  buckets Bucket[]
+
+  // Phase 3
+  rooms Room[]
 }
 
 model HouseholdMember {
@@ -207,7 +237,12 @@ model HouseholdMember {
   household     Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   bucketMembers BucketMember[]
-  responsibleFor BucketResponsibility[]
+
+  // Phase 2: responsibility layer
+  responsibilities BucketResponsibility[]
+
+  // Phase 3: rooms
+  roomAssignments RoomAssignment[]
 
   @@unique([householdId, userId])
   @@index([householdId])
@@ -236,9 +271,9 @@ model Bucket {
   fundingMode FundingMode @default(INTERNAL)
 
   // CREDIT REPORTING (individual only)
-  creditReportingEnabled     Boolean  @default(false)
-  creditReportingStatus      String   @default("INACTIVE")
-  creditReportingProvider    String   @default("NONE")
+  creditReportingEnabled     Boolean   @default(false)
+  creditReportingStatus      String    @default("INACTIVE")
+  creditReportingProvider    String    @default("NONE")
   creditReportingActivatedAt DateTime?
   creditReportingPausedAt    DateTime?
   creditReportingReason      String?
@@ -249,13 +284,18 @@ model Bucket {
   household   Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
   obligations Obligation[]
   members     BucketMember[]
-  responsibleMembers BucketResponsibility[]
 
   // Fintech foundations (future partner phases)
   virtualAccounts VirtualAccount[]
 
   // Attachments
   attachments BucketAttachment[]
+
+  // Phase 2: responsibility layer
+  responsibilities BucketResponsibility[]
+
+  // Phase 3: allocation engine (1 plan per bucket for now)
+  allocationPlan AllocationPlan?
 
   @@index([householdId])
   @@index([ownerUserId])
@@ -277,12 +317,18 @@ model BucketMember {
   @@index([householdMemberId])
 }
 
+/**
+ * Phase 2: per-bucket responsibility layer
+ * - This is NOT permissions; it's a "who is responsible" designation.
+ */
 model BucketResponsibility {
   id                String                   @id @default(cuid())
   bucketId          String
   householdMemberId String
   role              BucketResponsibilityRole @default(PRIMARY)
-  createdAt         DateTime                 @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   bucket          Bucket          @relation(fields: [bucketId], references: [id], onDelete: Cascade)
   householdMember HouseholdMember @relation(fields: [householdMemberId], references: [id], onDelete: Cascade)
@@ -412,7 +458,7 @@ model BankConnection {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   accounts BankAccount[]
 
   @@index([userId])
@@ -437,7 +483,7 @@ model BankAccount {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  connection       BankConnection     @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  connection       BankConnection    @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   balanceSnapshots BalanceSnapshot[]
   paymentMatches   PaymentMatch[]
 
@@ -446,7 +492,7 @@ model BankAccount {
 }
 
 model BalanceSnapshot {
-  id            String   @id @default(cuid())
+  id            String @id @default(cuid())
   bankAccountId String
 
   availableCents Int?
@@ -541,8 +587,83 @@ model VirtualAccount {
   @@index([status])
 }
 
+/**
+ * Phase 3: Rooms
+ * - Capture bedroom dimensions in "people-friendly" terms (10x12)
+ * - Store inches to avoid float drift, but FE can show feet.
+ */
+model Room {
+  id          String @id @default(cuid())
+  householdId String
+
+  name String
+
+  // bedroom dimensions (inches)
+  lengthIn Int?
+  widthIn  Int?
+  sqft     Int? // optional cached computed value
+
+  // private bathroom optional
+  hasPrivateBath Boolean @default(false)
+  bathLengthIn   Int?
+  bathWidthIn    Int?
+  bathSqft       Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  household   Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  assignments RoomAssignment[]
+
+  @@index([householdId])
+}
+
+model RoomAssignment {
+  id                String             @id @default(cuid())
+  roomId            String
+  householdMemberId String
+  role              RoomAssignmentRole @default(PRIMARY_BEDROOM)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  room            Room            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  householdMember HouseholdMember @relation(fields: [householdMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, householdMemberId, role])
+  @@index([roomId])
+  @@index([householdMemberId])
+  @@index([role])
+}
+
+/**
+ * Phase 3: Allocation Plan (per-bucket)
+ * - HYBRID supports "60% equal / 40% bedroom-weighted"
+ * - weighting uses assigned rooms (bedroom + optional private bath)
+ * - stored in basis points to avoid float drift (10000 bps = 100%)
+ */
+model AllocationPlan {
+  id       String           @id @default(cuid())
+  bucketId String           @unique
+  method   AllocationMethod @default(HYBRID)
+
+  // HYBRID settings (bps out of 10000)
+  equalShareBps    Int @default(6000)
+  weightedShareBps Int @default(4000)
+
+  includePrivateBath Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bucket Bucket @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+
+  @@index([bucketId])
+  @@index([method])
+}
+
 model ActionLog {
-  id          String   @id @default(cuid())
+  id          String @id @default(cuid())
   householdId String
   actorUserId String
   action      String
